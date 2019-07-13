@@ -96,6 +96,7 @@ CTROL_NEFBD_DEL = '1'
 CTROL_CHANG = '3'
 CTROL_LEDON = '4'
 CTROL_TIMEX = '5'
+CTROL_SFTIM = '6'
 
 
 def ctrol_choose():
@@ -105,6 +106,7 @@ def ctrol_choose():
         print(CTROL_CHANG + ' : 设备信息')
         print(CTROL_LEDON + ' : LED')
         print(CTROL_TIMEX + ' : 激活时间')
+        print(CTROL_SFTIM + ' : 保护时间')
         numstr = input()
         if numstr == CTROL_NEFBD:
             print('\nPlease choose your neighbour forbid action')
@@ -124,12 +126,15 @@ def ctrol_choose():
             pa = input().encode('ascii')
             return CTROL_CHANG, None, pa
         elif numstr == CTROL_LEDON:
-            while True:
-                print('\nPlease input LED on time')
-                param = input()
+            print('\nPlease input LED on time')
+            param = input()
             return CTROL_LEDON, param, None
         elif numstr == CTROL_TIMEX:
             return CTROL_TIMEX, None, None
+        elif numstr == CTROL_SFTIM:
+            print('\nPlease input saft time')
+            pa = input()
+            return CTROL_SFTIM, None, pa
         else:
             print('\nInvalid input, please choose again')
 
@@ -258,6 +263,12 @@ def send_req(req_type, parmas_a, parmas_b, pa, ser):
         elif parmas_a == CTROL_TIMEX:
             send = CTROL_PREDIX + bytearray(2)
             send[TYPE_LOCATION] = int(parmas_a)
+        elif parmas_a == CTROL_SFTIM:
+            safe_time = int(pa)
+            send = CTROL_PREDIX + bytearray(4)
+            send[TYPE_LOCATION] = int(parmas_a)
+            send[TYPE_LOCATION + 1] = safe_time % 256
+            send[TYPE_LOCATION + 2] = safe_time // 256
         else:
             return
     elif req_type == TEMPR_TYPE:
@@ -277,14 +288,17 @@ def send_req(req_type, parmas_a, parmas_b, pa, ser):
             send[23] = int(CTROL_LEDON)
             send[24] = int(pa)
         elif parmas_b == '3':
-            content_name = pa.encode('ascii')
+            content_name = pa[0:5].encode('ascii')
+            fresh_need = int(pa[5:]) if len(pa) > 5 else 600
+            if fresh_need > 65535:
+                fresh_need = 65535
             if len(content_name) <= 14:
                 full_name = bytearray(14)
                 full_name[0: len(content_name)] = content_name
                 req_name = taget_device + b'/' + full_name
                 send = bytearray(b'\x00\x00\x00' + req_name) + bytearray(14)
-                send[35] = 88
-                send[36] = 2
+                send[35] = fresh_need % 256
+                send[36] = fresh_need // 256
             else:
                 print('Content name is too long')
                 return
@@ -309,7 +323,7 @@ def readfxn(ser):
 
     while True:
         frame, recvlen = serialComm.pppread(ser, 1024)
-        print()
+        print(recvlen)
         print(frame[0: recvlen])
         if frame[4:7] == writeindex:
             print('ready to write index {}'.format(frame[7]))
@@ -472,7 +486,17 @@ def readfxn(ser):
                 print('返回---', '请求', NAME.decode('utf-8'), '的温度信息 : ' + getstr(frame[32: 42]))
             else:
                 pass
-        # elif frame[6] == 0x01:
+        # 得到请求的内容
+        elif frame[6] == 0x01:
+            name = getstr(frame[7: 27])
+            print('返回---', name, '的信息\t', end='')
+            print('跳数 {}\t'.format(frame[70]), end='')
+            print('是否命中缓存 {}\t'.format(frame[69]), end='')
+            gtime = frame[73] + (frame[74] << 8) + (frame[75] << 16) + (frame[76] << 24)
+            print('内容产生时间 {}ms'.format(gtime/100))
+            frame[6] = 0xff
+            frame[27] = 0xff
+            serialComm.pppsend(ser, frame[4: 30])
         #     target = b'test.mp4\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
         #     if frame[7:27] == target:
         #         # fragment = frame[30] + (frame[31] << 8)
